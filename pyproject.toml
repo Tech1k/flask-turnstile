@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Flask-Turnstile"
+dynamic = ["version"]
+description = "A Cloudflare Turnstile extension for Flask based on flask-recaptcha"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Kristian", email = "hello@tech1k.com" },
+]
+keywords = ["flask", "turnstile", "captcha", "cloudflare", "validate"]
+dependencies = [
+    "flask",
+    "requests",
+    "MarkupSafe",
+]
+classifiers = [
+    "Environment :: Web Environment",
+    "Framework :: Flask",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/Tech1k/flask-turnstile"
+Repository = "https://github.com/Tech1k/flask-turnstile"
+Issues = "https://github.com/Tech1k/flask-turnstile/issues"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+py-modules = ["flask_turnstile"]
+
+[tool.setuptools.dynamic]
+version = { attr = "flask_turnstile.__version__" }
