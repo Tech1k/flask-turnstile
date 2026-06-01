@@ -82,6 +82,19 @@ Returns the HTML code to implement. But you can use
 
 Returns bool
 
+**turnstile.get_response()**
+
+Returns Cloudflare's raw siteverify response as a dict, including `success` and,
+on failure, `error-codes` (plus `challenge_ts` and `hostname` when provided).
+Returns an empty dict when validation is disabled or the request fails. Useful
+for logging the reason a challenge was rejected:
+
+```python
+result = turnstile.get_response()
+if not result.get("success"):
+    app.logger.warning("Turnstile failed: %s", result.get("error-codes"))
+```
+
 ## In Template
 
 Just include **{{ turnstile }}** wherever you want to show the captcha

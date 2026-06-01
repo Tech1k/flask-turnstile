@@ -5,9 +5,10 @@ from flask import Flask
 from flask_turnstile import Turnstile
 
 
-def _mock_response(status_code=200, success=True):
+def _mock_response(status_code=200, success=True, payload=None):
     """Build a fake requests.Response for the Cloudflare siteverify endpoint."""
-    return MagicMock(status_code=status_code, **{"json.return_value": {"success": success}})
+    body = payload if payload is not None else {"success": success}
+    return MagicMock(status_code=status_code, **{"json.return_value": body})
 
 
 app = Flask(__name__)
@@ -61,6 +62,37 @@ def test_verify_custom_timeout():
     with patch("flask_turnstile.requests.post", return_value=_mock_response(success=True)) as post:
         turnstile.verify(response="x", remote_ip="1.2.3.4", timeout=3)
         assert post.call_args.kwargs.get("timeout") == 3
+
+def test_get_response_returns_full_payload():
+    turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
+    payload = {
+        "success": False,
+        "error-codes": ["invalid-input-response"],
+        "challenge_ts": "2026-05-31T00:00:00Z",
+        "hostname": "example.com",
+    }
+    with patch("flask_turnstile.requests.post", return_value=_mock_response(payload=payload)):
+        result = turnstile.get_response(response="bad", remote_ip="1.2.3.4")
+    assert result == payload
+    assert result["error-codes"] == ["invalid-input-response"]
+
+def test_get_response_empty_on_network_error():
+    turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
+    with patch("flask_turnstile.requests.post", side_effect=requests.ConnectionError):
+        assert turnstile.get_response(response="x", remote_ip="1.2.3.4") == {}
+
+def test_get_response_empty_when_disabled():
+    turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY", is_enabled=False)
+    assert turnstile.get_response(response="x") == {}
+
+def test_instances_do_not_share_config():
+    a = Turnstile(site_key="KEY_A", secret_key="SECRET_A", theme="dark")
+    b = Turnstile(site_key="KEY_B", secret_key="SECRET_B", theme="light")
+    # Creating b must not clobber a's configuration (the old global-state bug).
+    assert 'data-sitekey="KEY_A"' in a.get_code()
+    assert 'data-theme="dark"' in a.get_code()
+    assert 'data-sitekey="KEY_B"' in b.get_code()
+    assert 'data-theme="light"' in b.get_code()
 
 def test_turnstile_theme_default():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")

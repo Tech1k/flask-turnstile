@@ -8,13 +8,18 @@ __license__ = "MIT"
 __author__ = "Kristian (originally ReCaptcha by Mardix)"
 __copyright__ = "(c) 2023-2026 Kristian (originally ReCaptcha by Mardix 2015)"
 
-from flask import request
+from typing import Any, Optional
+
+from flask import Flask, request
 try:
     from markupsafe import Markup, escape
 except ImportError:
     from jinja2 import Markup, escape
 import requests
 
+# Deprecated: configuration now lives on each Turnstile instance rather than on
+# this shared class. Kept defined for backwards compatibility with any code that
+# imported it; it is no longer used internally.
 class BlueprintCompatibility(object):
     site_key = None
     secret_key = None
@@ -61,11 +66,14 @@ class Turnstile(object):
         "feedback_enabled": "feedback-enabled",
     }
 
-    def __init__(self, app=None, site_key=None, secret_key=None, is_enabled=True, **kwargs):
+    def __init__(self, app: Optional[Flask] = None, site_key: Optional[str] = None,
+                 secret_key: Optional[str] = None, is_enabled: bool = True, **kwargs: Any) -> None:
+        self.site_key = site_key
+        self.secret_key = secret_key
+        self.options = {}
+
         if site_key:
-            BlueprintCompatibility.site_key = site_key
-            BlueprintCompatibility.secret_key = secret_key
-            BlueprintCompatibility.options = {
+            self.options = {
                 self.WIDGET_OPTIONS[name]: value
                 for name, value in kwargs.items()
                 if name in self.WIDGET_OPTIONS and value is not None
@@ -75,7 +83,7 @@ class Turnstile(object):
         elif app:
             self.init_app(app=app)
 
-    def init_app(self, app=None):
+    def init_app(self, app: Optional[Flask] = None) -> None:
         options = {}
         for name in self.WIDGET_OPTIONS:
             value = app.config.get("TURNSTILE_" + name.upper())
@@ -92,13 +100,13 @@ class Turnstile(object):
             return dict(turnstile=Markup(self.get_code()))
 
     @staticmethod
-    def _format_value(value):
+    def _format_value(value: Any) -> str:
         # Render Python booleans the way the Turnstile widget expects them.
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)
 
-    def get_code(self):
+    def get_code(self) -> str:
         """
         Returns the new Turnstile captcha code
         :return:
@@ -108,26 +116,42 @@ class Turnstile(object):
 
         attrs = "".join(
             ' data-{ATTR}="{VALUE}"'.format(ATTR=attr, VALUE=escape(self._format_value(value)))
-            for attr, value in BlueprintCompatibility.options.items()
+            for attr, value in self.options.items()
         )
 
         return ("""
         <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
         <div class="cf-turnstile" data-sitekey="{SITE_KEY}"{ATTRS}></div>
-        """.format(SITE_KEY=BlueprintCompatibility.site_key, ATTRS=attrs))
+        """.format(SITE_KEY=self.site_key, ATTRS=attrs))
 
-    def verify(self, response=None, remote_ip=None, timeout=None):
-        if self.is_enabled:
-            data = {
-                "secret": BlueprintCompatibility.secret_key,
-                "response": response or request.form.get('cf-turnstile-response'),
-                "remoteip": remote_ip or request.environ.get('REMOTE_ADDR')
-            }
+    def get_response(self, response: Optional[str] = None, remote_ip: Optional[str] = None,
+                     timeout: Optional[float] = None) -> dict:
+        """
+        Verify the token and return Cloudflare's raw siteverify JSON response.
 
-            try:
-                r = requests.post(self.VERIFY_URL, data=data,
-                                  timeout=timeout or self.DEFAULT_TIMEOUT)
-            except requests.RequestException:
-                return False
-            return r.json().get("success", False) if r.status_code == 200 else False
-        return True
+        Returns a dict that includes "success" and, on failure, "error-codes",
+        plus "challenge_ts" and "hostname" when provided by Cloudflare. Returns
+        an empty dict when validation is disabled or the request fails.
+        :return: dict
+        """
+        if not self.is_enabled:
+            return {}
+
+        data = {
+            "secret": self.secret_key,
+            "response": response or request.form.get('cf-turnstile-response'),
+            "remoteip": remote_ip or request.environ.get('REMOTE_ADDR')
+        }
+
+        try:
+            r = requests.post(self.VERIFY_URL, data=data,
+                              timeout=timeout or self.DEFAULT_TIMEOUT)
+        except requests.RequestException:
+            return {}
+        return r.json() if r.status_code == 200 else {}
+
+    def verify(self, response: Optional[str] = None, remote_ip: Optional[str] = None,
+               timeout: Optional[float] = None) -> bool:
+        if not self.is_enabled:
+            return True
+        return self.get_response(response, remote_ip, timeout).get("success", False)
