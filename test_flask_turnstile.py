@@ -1,7 +1,7 @@
 from unittest.mock import patch, MagicMock
 
 import requests
-from flask import Flask
+from flask import Flask, render_template_string
 from flask_turnstile import Turnstile
 
 
@@ -11,51 +11,66 @@ def _mock_response(status_code=200, success=True, payload=None):
     return MagicMock(status_code=status_code, **{"json.return_value": body})
 
 
-app = Flask(__name__)
-app.config.update({
-    "debug": True,
-    "TURNSTILE_SITE_KEY": "SITE_KEY",
-    "TURNSTILE_SECRET_KEY": "SECRET",
-    "TURNSTILE_ENABLED": True
-})
+def make_app(**config):
+    """A fresh Flask app per test, so config changes never leak between tests."""
+    app = Flask(__name__)
+    app.config.update({
+        "TURNSTILE_SITE_KEY": "SITE_KEY",
+        "TURNSTILE_SECRET_KEY": "SECRET",
+        "TURNSTILE_ENABLED": True,
+    })
+    app.config.update(config)
+    return app
+
 
 def test_turnstile_enabled():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
     assert isinstance(turnstile, Turnstile)
-    assert turnstile.is_enabled == True
+    assert turnstile.is_enabled is True
     assert "script" in turnstile.get_code()
     with patch("flask_turnstile.requests.post", return_value=_mock_response(success=False)):
-        assert turnstile.verify(response="None", remote_ip="0.0.0.0") == False
+        assert turnstile.verify(response="None", remote_ip="0.0.0.0") is False
 
 def test_turnstile_enabled_flask():
-    turnstile = Turnstile(app=app)
+    turnstile = Turnstile(app=make_app())
     assert isinstance(turnstile, Turnstile)
-    assert turnstile.is_enabled == True
+    assert turnstile.is_enabled is True
     assert "script" in turnstile.get_code()
     with patch("flask_turnstile.requests.post", return_value=_mock_response(success=False)):
-        assert turnstile.verify(response="None", remote_ip="0.0.0.0") == False
+        assert turnstile.verify(response="None", remote_ip="0.0.0.0") is False
+
+def test_template_renders_widget():
+    app = make_app(TURNSTILE_THEME="dark")
+    Turnstile(app=app)
+    with app.test_request_context():
+        out = render_template_string("{{ turnstile }}")
+    # rendered as real HTML, not escaped text
+    assert '<div class="cf-turnstile"' in out
+    assert "&lt;div" not in out
+    assert 'data-sitekey="SITE_KEY"' in out
+    assert 'data-theme="dark"' in out
 
 def test_verify_success():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
     with patch("flask_turnstile.requests.post", return_value=_mock_response(success=True)) as post:
-        assert turnstile.verify(response="good", remote_ip="1.2.3.4") == True
+        assert turnstile.verify(response="good", remote_ip="1.2.3.4") is True
         # the configured timeout must reach requests.post so a worker can't hang
         assert post.call_args.kwargs.get("timeout") == Turnstile.DEFAULT_TIMEOUT
 
 def test_verify_failure():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
     with patch("flask_turnstile.requests.post", return_value=_mock_response(success=False)):
-        assert turnstile.verify(response="bad", remote_ip="1.2.3.4") == False
+        assert turnstile.verify(response="bad", remote_ip="1.2.3.4") is False
 
 def test_verify_network_error():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
     with patch("flask_turnstile.requests.post", side_effect=requests.ConnectionError):
-        assert turnstile.verify(response="x", remote_ip="1.2.3.4") == False
+        assert turnstile.verify(response="x", remote_ip="1.2.3.4") is False
 
 def test_verify_non_200():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
     with patch("flask_turnstile.requests.post", return_value=_mock_response(status_code=500)):
-        assert turnstile.verify(response="x", remote_ip="1.2.3.4") == False
+        assert turnstile.verify(response="x", remote_ip="1.2.3.4") is False
 
 def test_verify_custom_timeout():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY")
@@ -103,11 +118,7 @@ def test_turnstile_theme_set():
     assert 'data-theme="dark"' in turnstile.get_code()
 
 def test_turnstile_theme_flask():
-    app.config.update({
-        "TURNSTILE_ENABLED": True,
-        "TURNSTILE_THEME": "light"
-    })
-    turnstile = Turnstile(app=app)
+    turnstile = Turnstile(app=make_app(TURNSTILE_THEME="light"))
     assert 'data-theme="light"' in turnstile.get_code()
 
 def test_turnstile_size():
@@ -127,12 +138,7 @@ def test_turnstile_bool_option():
     assert 'data-response-field="false"' in turnstile.get_code()
 
 def test_turnstile_options_via_flask_config():
-    app.config.update({
-        "TURNSTILE_ENABLED": True,
-        "TURNSTILE_THEME": "auto",
-        "TURNSTILE_SIZE": "normal"
-    })
-    turnstile = Turnstile(app=app)
+    turnstile = Turnstile(app=make_app(TURNSTILE_THEME="auto", TURNSTILE_SIZE="normal"))
     code = turnstile.get_code()
     assert 'data-theme="auto"' in code
     assert 'data-size="normal"' in code
@@ -143,15 +149,12 @@ def test_turnstile_unknown_kwarg_ignored():
 
 def test_turnstile_disabled():
     turnstile = Turnstile(site_key="SITE_KEY", secret_key="SECRET_KEY", is_enabled=False)
-    assert turnstile.is_enabled == False
+    assert turnstile.is_enabled is False
     assert turnstile.get_code() == ""
-    assert turnstile.verify(response="None", remote_ip="0.0.0.0") == True
+    assert turnstile.verify(response="None", remote_ip="0.0.0.0") is True
 
 def test_turnstile_disabled_flask():
-    app.config.update({
-        "TURNSTILE_ENABLED": False
-    })
-    turnstile = Turnstile(app=app)
-    assert turnstile.is_enabled == False
+    turnstile = Turnstile(app=make_app(TURNSTILE_ENABLED=False))
+    assert turnstile.is_enabled is False
     assert turnstile.get_code() == ""
-    assert turnstile.verify(response="None", remote_ip="0.0.0.0") == True
+    assert turnstile.verify(response="None", remote_ip="0.0.0.0") is True
